@@ -7,6 +7,7 @@
 #include <sys/ptrace.h>
 #include <sys/wait.h>
 #include <sys/user.h>
+#include <signal.h>
 
 #define BACKUP_SIZE 50
 
@@ -17,6 +18,8 @@
 
 // TODO: find this path dynamically using /proc/PID/maps
 #define LIBC_SO_PATH "/usr/lib/x86_64-linux-gnu/libc.so.6"
+
+#define INJECTED_SO_PATH "/home/ido/Desktop/work/so-injectior/libinjected.so"
 
 // for debug
 #include <unistd.h>
@@ -37,12 +40,13 @@ typedef struct State
     uintptr_t argv_addr;
 } State;
 
+size_t remote_malloc(int pid, void *addr, uint8_t *buff, size_t n);
 int remote_attach_process(int pid);
 int remote_state_preserve(int pid, State *state);
 int remote_alloc_args_on_stack(int pid, State *state);
 int remote_write_shellcode(int pid, State *state);
+int remote_run_shellcode(int pid, State *state);
 
-// TODO: implement
 uintptr_t remote_libc_start_address(int pid, State *state);
 
 int main(int argc, char *argv[])
@@ -88,12 +92,30 @@ int main(int argc, char *argv[])
 
     remote_write_shellcode(pid, &remote_state);
 
-    // end of main
-    fin();
-    while (1)
+    remote_run_shellcode(pid, &remote_state);
+    printf("state restored... detaching\n");
+
+    // ptrace(PTRACE_DETACH, pid, NULL, (void *)SIGSTOP);
+    ptrace(PTRACE_DETACH, pid, 0, 0);
+
+    return 0;
+}
+
+size_t remote_malloc(int pid, void *addr, uint8_t *buff, size_t n)
+{
+    union
     {
-        sleep(1);
+        uint8_t byte;
+        void *p;
+    } data = {0};
+
+    for (size_t i = 0; i < n; i++)
+    {
+        data.p = (void *)ptrace(PTRACE_PEEKDATA, pid, (void *)(addr + i), 0);
+        data.byte = buff[i];
+        ptrace(PTRACE_POKEDATA, pid, (void *)(addr + i), data);
     }
+    return 0;
 }
 
 int remote_attach_process(int pid)
@@ -122,7 +144,7 @@ int remote_state_preserve(int pid, State *state)
 
     for (int i = 0; i < BACKUP_SIZE; i++)
     {
-        uint8_t byte = (uint8_t)ptrace(PTRACE_PEEKDATA, pid, ip + i, NULL);
+        uint8_t byte = (uint8_t)ptrace(PTRACE_PEEKDATA, pid, (void *)(ip + i), NULL);
         state->patched_bytes[i].addr = ip + i;
         state->patched_bytes[i].val = byte;
         state->n++;
@@ -140,7 +162,7 @@ int remote_alloc_args_on_stack(int pid, State *state)
     uintptr_t stack_end = (uintptr_t)state->regs.rsp;
     uintptr_t alloc_start = stack_end - SAFETY_BUF_SIZE;
 
-    const char *libc_path = LIBC_SO_PATH;
+    const char *so_path = INJECTED_SO_PATH;
 
     union
     {
@@ -148,54 +170,14 @@ int remote_alloc_args_on_stack(int pid, State *state)
         void *p;
     } data = {0};
 
-    printf("allocating " LIBC_SO_PATH " in address %#lx\n", alloc_start);
-    for (int i = 0; i < strlen(libc_path); i++)
+    printf("allocating " INJECTED_SO_PATH " in address %#lx\n", alloc_start);
+    for (int i = 0; i < strlen(so_path); i++)
     {
-        data.byte = libc_path[i];
+        data.byte = so_path[i];
         ptrace(PTRACE_POKEDATA, pid, (void *)(alloc_start + i), data);
     }
     state->argv_addr = alloc_start;
     return 0;
-}
-
-int remote_write_shellcode(int pid, State *state)
-{
-    /* this shellcode is generated with:
-        nasm -f bin shellcode.asm -o shellcode.bin
-        xxd -i shellcode.bin
-
-    BITS 64
-    mov rdi, 0xffffffffffff ; place holder address for so allocated path
-    mov rsi, 0x1            ; RTLD_LAZY
-    mov rax, 0xeeeeeeeeeeee ; place holder address for dlopen
-    call rax
-
-    */
-    unsigned char shellcode_bin[] = {
-        0x48, 0xbf, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, // mov rdi, 0xffffffffffff
-        0xbe, 0x01, 0x00, 0x00, 0x00,                               // mov rsi, 0x1 ; RTLD_LAZY
-        0x48, 0xb8, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0x00, 0x00, // mov rax, 0xeeeeeeeeeeee
-        0xff, 0xd0                                                  // call rax
-    };
-    unsigned int shellcode_bin_len = 27;
-
-    /*
-    first, write the proper addresses to the shellcode
-        so str: [2:7]
-        dlopen: [17:22]
-    */
-
-    const uintptr_t argv_addr = state->argv_addr;
-    const uintptr_t dlopen_addr = state->libc_addr + DLOPEN_OFFSET_LIBC;
-
-    unsigned char *conv_argv = (unsigned char *)&argv_addr;
-    unsigned char *conv_dlopen = (unsigned char *)&dlopen_addr;
-    for (int i = 0; i < 6; i++) // 12 digits
-    {
-        shellcode_bin[i + 2] = conv_argv[i];
-        shellcode_bin[i + 17] = conv_dlopen[i];
-    }
-    return shellcode_bin_len;
 }
 
 uintptr_t remote_libc_start_address(int pid, State *state)
@@ -231,4 +213,95 @@ uintptr_t remote_libc_start_address(int pid, State *state)
 
     state->libc_addr = base_addr;
     return base_addr;
+}
+
+int remote_write_shellcode(int pid, State *state)
+{
+    /* this shellcode is generated with:
+        nasm -f bin shellcode.asm -o shellcode.bin
+        xxd -i shellcode.bin
+
+    BITS 64
+    mov rdi, 0xffffffffffff ; place holder address for so allocated path mov rsi, 0x1            ; RTLD_LAZY
+    mov rax, 0xeeeeeeeeeeee ; place holder address for dlopen
+    call rax
+
+    */
+    unsigned char shellcode_bin[] = {
+        0x48, 0xbf, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, // mov rdi, 0xffffffffffff
+        0xbe, 0x01, 0x00, 0x00, 0x00,                               // mov rsi, 0x1 ; RTLD_LAZY
+        0x48, 0xb8, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0x00, 0x00, // mov rax, 0xeeeeeeeeeeee
+        0xff, 0xd0,                                                 // call rax
+        0xcc                                                        // int 0x3
+    };
+    unsigned int shellcode_bin_len = 28;
+
+    /*
+    first, write the proper addresses to the shellcode
+        so str: [2:7]
+        dlopen: [17:22]
+    */
+
+    const uintptr_t argv_addr = state->argv_addr;
+    const uintptr_t dlopen_addr = state->libc_addr + DLOPEN_OFFSET_LIBC;
+
+    unsigned char *conv_argv = (unsigned char *)&argv_addr;
+    unsigned char *conv_dlopen = (unsigned char *)&dlopen_addr;
+    for (int i = 0; i < 6; i++) // 12 digits
+    {
+        shellcode_bin[i + 2] = conv_argv[i];
+        shellcode_bin[i + 17] = conv_dlopen[i];
+    }
+
+    // write the shellcode to the current instruction pointed address
+    reg_t ip = state->regs.rip;
+
+    union
+    {
+        uint8_t byte;
+        void *p;
+    } data = {0};
+
+    printf("writing shellcode in address %#llx\n", ip);
+    for (int i = 0; i < shellcode_bin_len; i++)
+    {
+        data.byte = shellcode_bin[i];
+        ptrace(PTRACE_POKEDATA, pid, (void *)(ip + i), data);
+    }
+
+    return shellcode_bin_len;
+}
+
+int remote_run_shellcode(int pid, State *state)
+{
+    struct user_regs_struct regs = {0};
+    int wstatus;
+    do
+    {
+        printf("send SIGCONT to process\n");
+        ptrace(PTRACE_CONT, pid, 0, 0);
+        waitpid(pid, &wstatus, 0);
+        if (!WIFSTOPPED(wstatus))
+        {
+            printf("did not stop as expected\n");
+            return 1;
+        }
+        ptrace(PTRACE_GETREGS, pid, 0, &regs);
+    } while (regs.rip != state->regs.rip + 28);
+    printf("reached end of injected shellcode\n");
+
+    printf("restoring patched bytes\n");
+    uint8_t *buff = (uint8_t *)malloc(state->n * sizeof(uint8_t));
+    for (int i = 0; i < state->n; i++)
+    {
+        buff[i] = state->patched_bytes[i].val;
+    }
+    remote_malloc(pid, (void *)state->patched_bytes[0].addr, buff, state->n);
+
+    printf("restoring old registers values\n");
+    ptrace(PTRACE_SETREGS, pid, 0, &state->regs);
+
+    printf("preserve listen on remote process\n");
+    // ptrace(PTRACE_CONT, pid, 0, 0);
+    return 0;
 }
