@@ -1,13 +1,17 @@
 # SO Injector
 This Project implements a simple Shared-Object injector in linux,
-using the `ptreace` mechanism.
+using the `ptrace` mechanism.
 
-# Steps
-1. Using ptrace, attach to a running process and stop it
-2. preserve remote process state: backup registers
-3. allocate string (so path) on the stack
-4. set registers to point to necessary value
-5. write the `call` opcode to `dlopen` from libc.so
-6. continue to next instruction with `ptrace`
-7. run the so main - code execution
-8. return original state and continue.
+# Build
+```bash
+./build.sh
+```
+
+# Run
+Use the example provided.
+- In one session execute `./example/remote`, the injector will attach to that process.
+- In another session run the compiled injector:
+```bash
+sudo ./injector $(pgrep remote) $(realpath example/libinjected.so)
+```
+Keep in mind the `sudo` is necessary for the injector to work.
