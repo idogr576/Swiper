@@ -24,7 +24,7 @@ int socket_init()
     }
     struct sockaddr_in addr = {.sin_family = AF_INET, .sin_port = htons(PORTNUM), .sin_addr = INADDR_ANY};
     bind(g_socket, (struct sockaddr *)&addr, sizeof(addr));
-    DEBUG_PRINT("[MODULE] Done socket module init\n");
+    LOG_DEBUG("[MODULE] Done socket module init\n");
     return 0;
 }
 
@@ -46,6 +46,6 @@ int socket_iterate()
 int socket_destroy()
 {
     close(g_socket);
-    DEBUG_PRINT("[FIN] socket module\n");
+    LOG_DEBUG("[FIN] socket module\n");
     return 0;
 }

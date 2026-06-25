@@ -36,43 +36,43 @@ int main(int argc, char *argv[])
     fp = fopen(cmdlinePath, "r");
     if (!fp)
     {
-        PRINT("could not open file: %s\n", cmdlinePath);
+        LOG_INFO("could not open file: %s\n", cmdlinePath);
         goto cleanup;
     }
     welcome_message("swiper.msg");
     fread(cmdline, 1, sizeof(cmdline), fp);
-    PRINT("Intercepting PID %d: %s\n", pid, cmdline);
+    LOG_INFO("Intercepting PID %d: %s\n", pid, cmdline);
 
     state_t remote_state = {.pid = pid, .n = g_shellcode_bin_len};
     state_t *pstate = &remote_state;
 
     if (remote_attach_process(pstate))
     {
-        PRINT("cannot attach to remote process\n");
+        LOG_INFO("cannot attach to remote process\n");
         goto cleanup;
     }
     time_t start_time = time(NULL);
 
     uintptr_t p = remote_libc_start_address(pstate);
-    DEBUG_PRINT("libc start address is %#lx\n", p);
+    LOG_DEBUG("libc start address is %#lx\n", p);
 
     remote_state_preserve(pstate);
-    DEBUG_PRINT("stopped remote process at %#llx\n", remote_state.regs.rip);
+    LOG_DEBUG("stopped remote process at %#llx\n", remote_state.regs.rip);
 
     remote_alloc_args_on_stack(pstate);
 
-    DEBUG_PRINT("using resolved addresses to build a shellcode\n");
+    LOG_DEBUG("using resolved addresses to build a shellcode\n");
     construct_shellcode(pstate);
 
     remote_write_shellcode(pstate);
 
     remote_run_shellcode(pstate);
-    DEBUG_PRINT("state restored... detaching\n");
+    LOG_DEBUG("state restored... detaching\n");
 
     ptrace(PTRACE_DETACH, pid, 0, 0);
 
     time_t end_time = time(NULL);
-    DEBUG_PRINT("remote process was stopped for %ld seconds in total\n", end_time - start_time);
+    LOG_DEBUG("remote process was stopped for %ld seconds in total\n", end_time - start_time);
 
 cleanup:
     if (fp)

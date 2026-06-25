@@ -44,16 +44,16 @@ void tool_main_loop(int sig)
 
 void tool_init()
 {
-    DEBUG_PRINT("[INJECTED] Shared object loaded successfully!\n");
+    LOG_DEBUG("[INJECTED] Shared object loaded successfully!\n");
 
     /* init modules */
-    DEBUG_PRINT("g_num = %d\n", g_num);
+    LOG_DEBUG("g_num = %d\n", g_num);
     for (int i = 0; i < g_num; i++)
     {
         g_modules[i]->id = i;
         g_modules[i]->is_loaded = !g_modules[i]->ops.init();
     }
-    DEBUG_PRINT("[MODULE] Done all modules init\n");
+    LOG_DEBUG("[MODULE] Done all modules init\n");
 
     /* setup repetitive calls to main_loop */
     signal(SIGALRM, tool_main_loop);
@@ -69,6 +69,6 @@ void tool_destroy()
         {
             ret = g_modules[i]->ops.destroy();
         }
-        DEBUG_PRINT("module %d unloaded with exit code %d\n", g_modules[i]->id, ret);
+        LOG_DEBUG("module %d unloaded with exit code %d\n", g_modules[i]->id, ret);
     }
 }

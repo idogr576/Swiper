@@ -64,7 +64,7 @@ int remote_attach_process(state_t *tracee)
     waitpid(tracee->pid, &wstatus, 0);
     if (!WIFSTOPPED(wstatus))
     {
-        DEBUG_PRINT("remote process did not stop as expected\n");
+        LOG_INFO("remote process did not stop as expected\n");
         return 1;
     }
     return 0;
@@ -98,7 +98,7 @@ int remote_alloc_args_on_stack(state_t *tracee)
     uintptr_t stack_end = (uintptr_t)tracee->regs.rsp;
     uintptr_t alloc_start = stack_end - SAFETY_BUF_SIZE;
 
-    DEBUG_PRINT("allocating %s in address %#lx\n", g_so_path, alloc_start);
+    LOG_INFO("allocating %s in address %#lx\n", g_so_path, alloc_start);
     // strlen does not include the '\0'
     remote_write_mem(tracee->pid, (void *)alloc_start, (uint8_t *)g_so_path, strlen(g_so_path) + 1);
     tracee->argv_addr = alloc_start;
@@ -128,7 +128,7 @@ uintptr_t remote_libc_start_address(state_t *tracee)
             sep = strchr(line, '-');
             if (!sep)
             {
-                DEBUG_PRINT("error parsing the process libc start address\n");
+                LOG_INFO("error parsing the process libc start address\n");
                 return 2;
             }
             *sep = '\0';
@@ -167,7 +167,7 @@ int construct_shellcode(state_t *tracee)
 int remote_write_shellcode(state_t *tracee)
 {
     void *ip = (void *)tracee->regs.rip;
-    DEBUG_PRINT("writing %ld bytes of shellcode in address %p\n", tracee->n, ip);
+    LOG_INFO("writing %ld bytes of shellcode in address %p\n", tracee->n, ip);
     remote_write_mem(tracee->pid, ip, g_shellcode_bin, tracee->n);
 
     return 0;
@@ -179,22 +179,22 @@ int remote_run_shellcode(state_t *tracee)
     int wstatus;
     do
     {
-        DEBUG_PRINT("send SIGCONT to process\n");
+        LOG_INFO("send SIGCONT to process\n");
         ptrace(PTRACE_CONT, tracee->pid, 0, 0);
         waitpid(tracee->pid, &wstatus, 0);
         if (!WIFSTOPPED(wstatus))
         {
-            DEBUG_PRINT("did not stop as expected\n");
+            LOG_INFO("did not stop as expected\n");
             return 1;
         }
         ptrace(PTRACE_GETREGS, tracee->pid, 0, &regs);
     } while (regs.rip != tracee->regs.rip + g_shellcode_bin_len);
-    DEBUG_PRINT("reached end of injected shellcode\n");
+    LOG_INFO("reached end of injected shellcode\n");
 
-    DEBUG_PRINT("restoring patched bytes\n");
+    LOG_INFO("restoring patched bytes\n");
     remote_write_mem(tracee->pid, (void *)tracee->regs.rip, tracee->patched_bytes, tracee->n);
 
-    DEBUG_PRINT("restoring old registers values\n");
+    LOG_INFO("restoring old registers values\n");
     ptrace(PTRACE_SETREGS, tracee->pid, 0, &tracee->regs);
 
     return 0;

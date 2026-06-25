@@ -2,9 +2,11 @@
 
 #define PRINT printf
 
+#define LOG_INFO(fmt, ...) PRINT("[INFO] " fmt, ##__VA_ARGS__)
+
 #ifdef DEBUG
-#define DEBUG_PRINT(fmt, ...) PRINT("[DEBUG] " fmt, ##__VA_ARGS__)
+#define LOG_DEBUG(fmt, ...) PRINT("[DEBUG] " fmt, ##__VA_ARGS__)
 #else
-#define DEBUG_PRINT(fmt, ...) // Becomes nothing in regular compilation
+#define LOG_DEBUG(fmt, ...) // Becomes nothing in regular compilation
 
 #endif
